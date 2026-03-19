@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineCRCE - Shortfilm Festival 2026</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px 0;
+            background-color: #111; /* Cinematic dark background */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+            font-family: sans-serif;
+        }
+        #pdf-container {
+            width: 100%;
+            max-width: 900px; /* Looks great on PC, fits mobile naturally */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .page-container {
+            width: 100%;
+            margin-bottom: 25px;
+            position: relative;
+        }
+        .page-wrapper {
+            position: relative;
+            width: 100%;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto; /* Maintains aspect ratio */
+            background-color: #fff;
+            box-shadow: 0px 8px 16px rgba(0,0,0,0.6);
+            border-radius: 4px;
+        }
+        .annotation-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let non-link clicks pass through */
+        }
+        .link-annotation {
+            position: absolute;
+            pointer-events: auto;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: background 0.2s ease;
+            /* Uncomment the line below to debug where the link hitboxes are */
+            /* background: rgba(0, 150, 255, 0.2); */ 
+        }
+        .link-annotation:hover {
+            background: rgba(255, 255, 255, 0.15); /* Slight highlight on hover */
+        }
+        #loader {
+            color: #fff;
+            margin-top: 50px;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loader">Loading PDF on all devices, please wait...</div>
+    <div id="pdf-container"></div>
+
+    <script>
+        // Ensure this matches your file name exactly
+        const url = 'CineCRCE - Shortfilm Competition.pdf';
+        
+        const pdfjsLib = window['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const container = document.getElementById('pdf-container');
+        const loader = document.getElementById('loader');
+
+        pdfjsLib.getDocument(url).promise.then(pdf => {
+            loader.style.display = 'none';
+
+            // Create placeholders first so pages render in strict order
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const placeholder = document.createElement('div');
+                placeholder.id = 'page-' + i;
+                placeholder.className = 'page-container';
+                container.appendChild(placeholder);
+            }
+
+            // Loop through and render each page
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                pdf.getPage(pageNum).then(page => {
+                    const viewport = page.getViewport({ scale: 2.0 }); // Render at 2x resolution for crisp text
+
+                    const targetPlaceholder = document.getElementById('page-' + pageNum);
+                    const pageWrapper = document.createElement('div');
+                    pageWrapper.className = 'page-wrapper';
+                    
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    pageWrapper.appendChild(canvas);
+
+                    const annotationLayer = document.createElement('div');
+                    annotationLayer.className = 'annotation-layer';
+                    pageWrapper.appendChild(annotationLayer);
+                    targetPlaceholder.appendChild(pageWrapper);
+
+                    const renderContext = {
+                        canvasContext: context,
+                        viewport: viewport
+                    };
+                    page.render(renderContext);
+
+                    // Map all hyperlinks and internal index jumps
+                    page.getAnnotations().then(annotations => {
+                        annotations.forEach(annotation => {
+                            if (annotation.subtype === 'Link') {
+                                const rect = viewport.convertToViewportRectangle(annotation.rect);
+                                
+                                const minX = Math.min(rect[0], rect[2]);
+                                const minY = Math.min(rect[1], rect[3]);
+                                const maxX = Math.max(rect[0], rect[2]);
+                                const maxY = Math.max(rect[1], rect[3]);
+
+                                // Calculate percentage positions so links scale accurately on mobile
+                                const leftPercent = (minX / viewport.width) * 100;
+                                const topPercent = (minY / viewport.height) * 100;
+                                const widthPercent = ((maxX - minX) / viewport.width) * 100;
+                                const heightPercent = ((maxY - minY) / viewport.height) * 100;
+
+                                const linkElement = document.createElement('a');
+                                linkElement.className = 'link-annotation';
+                                linkElement.style.left = leftPercent + '%';
+                                linkElement.style.top = topPercent + '%';
+                                linkElement.style.width = widthPercent + '%';
+                                linkElement.style.height = heightPercent + '%';
+
+                                if (annotation.url) {
+                                    // Handles standard external web URLs
+                                    linkElement.href = annotation.url;
+                                    linkElement.target = '_blank';
+                                    linkElement.rel = 'noopener noreferrer';
+                                } else if (annotation.dest) {
+                                    // Handles internal document jumps (like your Index page)
+                                    linkElement.href = '#';
+                                    linkElement.addEventListener('click', (e) => {
+                                        e.preventDefault();
+                                        let destPromise = typeof annotation.dest === 'string' 
+                                            ? pdf.getDestination(annotation.dest) 
+                                            : Promise.resolve(annotation.dest);
+
+                                        destPromise.then(dest => {
+                                            if(dest) {
+                                                pdf.getPageIndex(dest[0]).then(pageIndex => {
+                                                    const targetId = 'page-' + (pageIndex + 1);
+                                                    document.getElementById(targetId).scrollIntoView({ behavior: 'smooth' });
+                                                });
+                                            }
+                                        });
+                                    });
+                                }
+                                annotationLayer.appendChild(linkElement);
+                            }
+                        });
+                    });
+                });
+            }
+        }).catch(error => {
+            loader.innerHTML = "Error loading PDF. Please ensure the file is named <strong>'CineCRCE - Shortfilm Competition.pdf'</strong> and is in the same folder as this HTML file.<br><br><small>(Note: If opening locally, modern browsers block PDF scripts via 'file://' for security. You must host this or use a local server like VS Code Live Server).</small>";
+            console.error(error);
+        });
+    </script>
+</body>
+</html>
